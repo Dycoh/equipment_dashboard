@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st 
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -51,11 +51,8 @@ performance_sheets = pd.ExcelFile(performance_file)
     daily_performance_df,
 ) = load_excel_data(availability_file, performance_file)
 
-# st.write("📘 Sheets in Availability File:", availability_sheets.sheet_names)
-# st.write("📗 Sheets in Performance File:", performance_sheets.sheet_names)
-
 # ==========================================
-# STEP 2: Quick data previews (optional toggle)
+# STEP 2: Raw Data Preview Toggle
 # ==========================================
 if st.checkbox("🔍 Show Raw Data Previews"):
     st.write("### RELIABILITY SNAP SHOT")
@@ -74,7 +71,7 @@ if st.checkbox("🔍 Show Raw Data Previews"):
     st.dataframe(daily_performance_df.head())
 
 # ==========================================
-# FIX 1: Clean unnamed and mixed-type columns globally
+# STEP 3: Fix Unnamed Columns + Cleaners
 # ==========================================
 def clean_dataframe(df):
     """Drop unnamed columns, trim spaces, and convert mixed types safely."""
@@ -98,7 +95,7 @@ individual_equipment_df = clean_dataframe(individual_equipment_df)
 daily_performance_df = clean_dataframe(daily_performance_df)
 
 # ==========================================
-# STEP 3: Data Cleaning (Availability)
+# STEP 4: Clean Availability Sheet
 # ==========================================
 availability_df = pd.read_excel(
     availability_file,
@@ -129,7 +126,7 @@ st.write("✅ Cleaned Availability Data:")
 st.dataframe(availability_df[["Equipment_Type", "Holding", "Available", "Availability %"]])
 
 # ==========================================
-# STEP 4: Data Cleaning (Performance)
+# STEP 5: Performance Summary Cleaning
 # ==========================================
 performance_summary_df = performance_summary_df.replace(["-", "_", "TOTAL", "AVE."], np.nan)
 
@@ -145,18 +142,7 @@ if "EQUIP" in individual_equipment_df.columns:
     individual_equipment_df["EQUIP"] = individual_equipment_df["EQUIP"].ffill()
 
 # ==========================================
-# FIX 2: Convert Excel serial dates in Daily Performance data
-# ==========================================
-if "DATE" in daily_performance_df.columns:
-    if np.issubdtype(daily_performance_df["DATE"].dtype, np.number):
-        daily_performance_df["DATE"] = pd.to_datetime(
-            daily_performance_df["DATE"], origin="1899-12-30", unit="D", errors="coerce"
-        )
-    else:
-        daily_performance_df["DATE"] = pd.to_datetime(daily_performance_df["DATE"], errors="coerce")
-
-# ==========================================
-# STEP 5: Dashboard Navigation
+# STEP 6: Navigation
 # ==========================================
 st.sidebar.title("Navigation")
 page = st.sidebar.radio(
@@ -164,15 +150,19 @@ page = st.sidebar.radio(
     ["Overview", "Availability Dashboard", "Performance Summary", "Fault Analysis"]
 )
 
-# --- OVERVIEW PAGE ---
+# ==========================================
+# OVERVIEW PAGE
+# ==========================================
 if page == "Overview":
-    st.subheader("Welcome to the Equipment Dashboard")
+    st.subheader("Welcome to the Overview  Dashboard")
     st.write("""
     This dashboard provides insights into equipment performance, availability, 
     and fault trends based on daily operational data.
     """)
 
-# --- AVAILABILITY PAGE ---
+# ==========================================
+# AVAILABILITY DASHBOARD
+# ==========================================
 elif page == "Availability Dashboard":
     st.subheader("⚙️ Equipment Availability Overview")
     st.dataframe(availability_df[["Equipment_Type", "Holding", "Available", "Availability %"]])
@@ -205,7 +195,9 @@ elif page == "Availability Dashboard":
     ax.axis("equal")
     st.pyplot(fig)
 
-# --- PERFORMANCE SUMMARY PAGE ---
+# ==========================================
+# PERFORMANCE SUMMARY PAGE
+# ==========================================
 elif page == "Performance Summary":
     st.subheader("📈 Performance Summary")
     st.dataframe(performance_summary_df.head())
@@ -220,133 +212,116 @@ elif page == "Performance Summary":
         st.write("### 📊 Sample Comparison of First 2 Numeric Metrics")
         st.line_chart(performance_summary_df[numeric_cols[:2]])
 
-
-
-
-# --- FAULT ANALYSIS PAGE ---
+# ==========================================
+# FIXED — SIMPLE FAULT ANALYSIS (NO DATE REQUIRED)
+# ==========================================
 elif page == "Fault Analysis":
-    st.subheader("🔧 Fault Category Analysis & Trends")
+    st.subheader("🔧 Fault Category Analysis (Based on Individual Equipment Sheet)")
 
-    # --- Normalize column names ---
-    daily_performance_df.columns = daily_performance_df.columns.str.strip().str.upper()
+    st.write("""
+    Since the dataset does not contain DATE values for faults, analysis is based on:
+    - Equipment  
+    - Fault Categories  
+    - Downtime  
+    - Calls  
+    - MTTR  
+    """)
 
-    # --- Identify key columns dynamically ---
-    date_col = next((c for c in daily_performance_df.columns if "DATE" in c), None)
-    fault_col = next((c for c in daily_performance_df.columns if "FAULT" in c), None)
-    equip_col = next((c for c in daily_performance_df.columns if "EQUIP" in c), None)
+    fault_df = individual_equipment_df.copy()
 
-    if not date_col or not fault_col:
-        st.error("❌ Could not find 'DATE' or 'FAULT CATEGORY' column in the Excel file.")
+    # --- Detect fault column ---
+    fault_col = None
+    for c in fault_df.columns:
+        if "FAULT" in c.upper():
+            fault_col = c
+    if fault_col:
+        fault_df = fault_df.rename(columns={fault_col: "FAULT CATEGORY"})
     else:
-        # --- Preview the first few DATE values ---
-        st.write("📅 Sample of DATE column:", daily_performance_df[date_col].head(10).tolist())
+        st.error("❌ No FAULT column found.")
+        st.stop()
 
-        # --- Preview the first few DATE values (raw) ---
+    # --- Equipment column ---
+    equip_col = None
+    for c in fault_df.columns:
+        if c.upper() in ["EQUIP", "EQUIPMENT", "EQUIPT"]:
+            equip_col = c
+    if equip_col is None:
+        equip_col = fault_df.columns[0]
 
+    fault_df = fault_df.rename(columns={equip_col: "EQUIP"})
 
-        st.write("🔍 Data type before conversion:", daily_performance_df[date_col].dtype)
-        st.write("Unique sample values:", daily_performance_df[date_col].dropna().unique()[:15])
+    # --- Downtime Hours ---
+    downtime_col = None
+    for c in fault_df.columns:
+        if "HRS" in c.upper():
+            downtime_col = c
+    if downtime_col:
+        fault_df["DOWNTIME_HRS"] = pd.to_numeric(fault_df[downtime_col], errors="coerce")
+    else:
+        fault_df["DOWNTIME_HRS"] = 0
 
+    # --- Calls ---
+    calls_col = None
+    for c in fault_df.columns:
+        if "CALL" in c.upper():
+            calls_col = c
+    if calls_col:
+        fault_df["CALLS"] = pd.to_numeric(fault_df[calls_col], errors="coerce")
+    else:
+        fault_df["CALLS"] = 0
 
-        # --- Convert DATE column to datetime robustly ---
-        daily_performance_df[date_col] = pd.to_datetime( 
-            daily_performance_df[date_col], errors="coerce", dayfirst=True
-        )
+    # --- MTTR ---
+    mttr_col = None
+    for c in fault_df.columns:
+        if "MTTR" in c.upper():
+            mttr_col = c
+    if mttr_col:
+        fault_df["MTTR"] = pd.to_numeric(fault_df[mttr_col], errors="coerce")
+    else:
+        fault_df["MTTR"] = 0
 
-        # If too many are NaT, try Excel serial number conversion
-        if daily_performance_df[date_col].isna().mean() > 0.9:
-            try:
-                daily_performance_df[date_col] = pd.to_datetime(
-                    pd.to_numeric(daily_performance_df[date_col], errors="coerce"),
-                    origin="1899-12-30",
-                    unit="D",
-                )
-            except Exception as e:
-                st.warning(f"⚠️ Alternate date conversion failed: {e}")
+    # === RAW PREVIEW ===
+    st.write("### 📋 Raw Fault Data Preview")
+    st.dataframe(fault_df.head(20))
 
-        # --- Sidebar filters ---
-        st.sidebar.subheader("🔍 Filter Fault Data")
+    # === KPIs ===
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Fault Records", len(fault_df))
+    col2.metric("Total Downtime (hrs)", round(fault_df["DOWNTIME_HRS"].sum(), 2))
+    col3.metric("Total Calls", int(fault_df["CALLS"].sum()))
 
-        valid_dates = daily_performance_df[date_col].dropna()
-        if not valid_dates.empty:
-            min_date, max_date = valid_dates.min(), valid_dates.max()
-        else:
-            min_date, max_date = pd.Timestamp("2025-01-01"), pd.Timestamp("2025-12-31")
+    # === Top Fault Categories ===
+    st.write("### 🧠 Top Fault Categories")
+    fault_counts = fault_df["FAULT CATEGORY"].fillna("Unknown").value_counts()
 
-        date_range = st.sidebar.date_input("Select Date Range", [min_date, max_date])
+    fig, ax = plt.subplots()
+    fault_counts.head(10).plot(kind="barh", ax=ax)
+    ax.set_xlabel("Count")
+    ax.set_ylabel("Fault Category")
+    st.pyplot(fig)
 
-        equipment_options = (
-            sorted(daily_performance_df[equip_col].dropna().unique())
-            if equip_col
-            else []
-        )
-        selected_equipment = st.sidebar.multiselect("Filter by Equipment", equipment_options)
+    # === Downtime by Equipment ===
+    st.write("### ⏱️ Downtime by Equipment (Top 20)")
+    downtime_rank = (
+        fault_df.groupby("EQUIP")["DOWNTIME_HRS"]
+        .sum()
+        .sort_values(ascending=False)
+        .head(20)
+    )
+    st.bar_chart(downtime_rank)
 
-        fault_options = (
-            sorted(daily_performance_df[fault_col].dropna().unique())
-            if fault_col
-            else []
-        )
-        selected_faults = st.sidebar.multiselect("Filter by Fault Category", fault_options)
-
-        # --- Filtering ---
-        filtered_df = daily_performance_df.copy()
-
-        # Convert date_range properly
-        if isinstance(date_range, (list, tuple)):
-            if len(date_range) == 2:
-                start_date, end_date = map(pd.Timestamp, date_range)
-            else:
-                start_date = end_date = pd.Timestamp(date_range[0])
-        else:
-            start_date = end_date = pd.Timestamp(date_range)
-
-        # Apply date filter only if column is valid datetime
-        if pd.api.types.is_datetime64_any_dtype(filtered_df[date_col]):
-            filtered_df = filtered_df[
-                (filtered_df[date_col] >= start_date)
-                & (filtered_df[date_col] <= end_date)
-            ]
-        else:
-            st.warning("⚠️ DATE column not recognized as datetime — skipping date filter.")
-
-        if selected_equipment and equip_col:
-            filtered_df = filtered_df[filtered_df[equip_col].isin(selected_equipment)]
-        if selected_faults and fault_col:
-            filtered_df = filtered_df[filtered_df[fault_col].isin(selected_faults)]
-
-        st.info(
-            f"🔎 Filtered from **{len(daily_performance_df)}** rows → **{len(filtered_df)}** rows "
-            f"for dates between {start_date.date()} and {end_date.date()}"
-        )
-
-        # --- Metrics ---
-        st.metric("Total Fault Records", len(filtered_df))
-        if not filtered_df.empty:
-            top_fault = filtered_df[fault_col].mode().iloc[0]
-            st.metric("Most Frequent Fault", top_fault)
-
-            # --- Charts ---
-            st.write("### 📆 Fault Trend Over Time")
-            fault_trend = (
-                filtered_df.groupby([date_col, fault_col]).size().unstack(fill_value=0)
-            )
-            st.line_chart(fault_trend)
-
-            st.write("### 🧠 Top 10 Fault Categories")
-            fault_counts = filtered_df[fault_col].value_counts().head(10).sort_values(ascending=True)
-            fig, ax = plt.subplots()
-            fault_counts.plot(kind="barh", ax=ax)
-            st.pyplot(fig)
-        else:
-            st.warning("⚠️ No fault data available for the selected filters.")
-
-        st.write("### 📋 Filtered Fault Data (Preview)")
-        st.dataframe(filtered_df.head(20))
-
+    # === Calls by Equipment ===
+    st.write("### 📞 Calls by Equipment (Top 20)")
+    calls_rank = (
+        fault_df.groupby("EQUIP")["CALLS"]
+        .sum()
+        .sort_values(ascending=False)
+        .head(20)
+    )
+    st.bar_chart(calls_rank)
 
 # ==========================================
-# STEP 6: FINAL FIX — Streamlit Display Compatibility
+# STEP 7: Streamlit Arrow Compatibility Fix
 # ==========================================
 def make_arrow_safe(df):
     """Convert problematic types so Streamlit Arrow serializer won't break."""
