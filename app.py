@@ -37,11 +37,9 @@ performance_file = "CTE Equipment Performance Analysis 09 - 2025 - SEPTEMBER.xls
 # Align logo and title horizontally
 col_logo, col_title = st.columns([1, 10])
 with col_logo:
-    # Put your logo file path (logo.png) in project root or update path
     try:
         st.image("KPA_logo.jpeg", width=180)
     except Exception:
-        # If no logo present, keep empty placeholder to preserve alignment
         st.write("")
 with col_title:
     st.markdown("<h1 style='margin:0; padding-top:6px; color: white;'>Equipment Overview Dashboard</h1>", unsafe_allow_html=True)
@@ -210,37 +208,50 @@ if page == "Overview":
 
     # Checkbox to show raw data previews (FULL sheets, formatted display)
     if st.checkbox("🔍 Show Raw Data Previews"):
-        # RELIABILITY: try show full sheet; fallback to head() only if full shows empty
+        # RELIABILITY: try to show full cleaned sheet; fallback to raw sheet head() only if cleaned display is empty
         try:
             rel_display = display_copy_with_format(reliability_df, decimals=2, drop_empty_cols=True)
             if rel_display.shape[0] == 0 or rel_display.shape[1] == 0:
-                st.write("### RELIABILITY SNAP SHOT ")
-                st.dataframe(reliability_df.head())
+                # Fallback: read raw sheet without our minimal cleaning (attempt to show the original file contents)
+                try:
+                    raw_reliability = pd.read_excel(availability_file, sheet_name="RELIABILITY SNAP SHOT", header=None)
+                    # If the raw read has rows, show top rows (headerless) to avoid empty display
+                    if raw_reliability.shape[0] > 0:
+                        st.write("### RELIABILITY SNAP SHOT")
+                        # Show first 20 rows of raw sheet so layout is visible (headerless)
+                        st.dataframe(raw_reliability.head(20).fillna("").reset_index(drop=True))
+                    else:
+                        st.write("### RELIABILITY SNAP SHOT")
+                        st.dataframe(reliability_df.head())
+                except Exception:
+                    # final fallback to cleaned head
+                    st.write("### RELIABILITY SNAP SHOT")
+                    st.dataframe(reliability_df.head())
             else:
-                st.write("### RELIABILITY SNAP SHOT ")
+                st.write("### RELIABILITY SNAP SHOT")
                 st.dataframe(rel_display)
         except Exception:
-            st.write("### RELIABILITY SNAP SHOT ")
+            st.write("### RELIABILITY SNAP SHOT")
             st.dataframe(reliability_df.head())
 
-#Full sheet — empty columns removed
-        st.write("### AVAILABILITY DASHBOARD ")
+        # Full sheet — empty columns removed
+        st.write("### AVAILABILITY DASHBOARD")
         st.dataframe(display_copy_with_format(availability_df, decimals=2, drop_empty_cols=True))
 
-        st.write("### PERFORMANCE SUMMARY ")
+        st.write("### PERFORMANCE SUMMARY")
         st.dataframe(display_copy_with_format(performance_summary_df, decimals=2, drop_empty_cols=True))
 
-        st.write("### INDIVIDUAL EQUIPMENT ")
+        st.write("### INDIVIDUAL EQUIPMENT")
         st.dataframe(display_copy_with_format(individual_equipment_df, decimals=2, drop_empty_cols=True))
 
-#(Full sheet, DATE column shown as-is)
-        st.write("### DAILY PERFORMANCE DATA ")
+        # (Full sheet, DATE column shown as-is)
+        st.write("### DAILY PERFORMANCE DATA")
         st.dataframe(display_copy_with_format(daily_performance_df, decimals=2, drop_empty_cols=True))
 
     # On overview, show a checkbox that displays the cleaned availability snapshot (1 decimal)
     if st.checkbox("Show cleaned availability snapshot (Overview)"):
         if "Equipment_Type" in availability_proc.columns:
-            st.write("### Cleaned Availability Snapshot ")
+            st.write("### Cleaned Availability Snapshot")
             st.dataframe(display_availability_with_one_decimal(availability_proc[["Equipment_Type", "Holding", "Available", "Availability %"]]))
         else:
             st.warning("Cleaned availability data not available — check sheet format.")
@@ -252,7 +263,7 @@ elif page == "Availability Dashboard":
     st.subheader("⚙️ Equipment Availability Overview")
 
     if "Equipment_Type" in availability_proc.columns:
-        st.write("### Cleaned Availability Data ")
+        st.write("### Cleaned Availability Data")
         st.dataframe(display_availability_with_one_decimal(availability_proc[["Equipment_Type", "Holding", "Available", "Availability %"]]))
     else:
         st.warning("Cleaned availability data could not be prepared — check availability sheet structure.")
@@ -301,7 +312,7 @@ elif page == "Availability Dashboard":
 elif page == "Performance Summary":
     st.subheader("📈 Performance Summary")
 
-    st.write("### Full Performance Summary ")
+    st.write("### Full Performance Summary")
     st.dataframe(display_copy_with_format(performance_summary_df, decimals=2, drop_empty_cols=True))
 
     numeric_cols = performance_summary_df.select_dtypes(include=[np.number]).columns
@@ -310,24 +321,21 @@ elif page == "Performance Summary":
         st.write("### 🧮 Average Key Metrics")
         st.dataframe(avg_values.to_frame("Average Value").round(2))
 
-    # --- Scatter comparison for months/metrics ---
+    # --- Scatter comparison for months/metrics (Option A: equipment auto-detect, dots only) ---
     st.write("### 📊 Comparison: choose one or more months to compare")
     # Auto-detect equipment column: first textual (object) column having >0 non-null string values
     equipment_col = None
     for c in performance_summary_df.columns:
         if performance_summary_df[c].dtype == object or performance_summary_df[c].dtype == "string":
             non_null = performance_summary_df[c].dropna().astype(str).str.strip()
-            # treat as equipment col if a good number of non-empty strings are present
             if non_null.shape[0] > 0 and non_null.str.len().gt(0).sum() > 0:
                 equipment_col = c
                 break
-    # If none found, fall back to first column
     if equipment_col is None:
         equipment_col = performance_summary_df.columns[0]
 
     st.write(f"Detected equipment column: **{equipment_col}**")
 
-    # months/metrics options: numeric columns (user selects)
     month_options = [c for c in performance_summary_df.columns if c != equipment_col and pd.api.types.is_numeric_dtype(performance_summary_df[c])]
     selected_months = st.multiselect("Select months/metrics to plot", month_options, default=month_options[:2] if len(month_options) >= 2 else month_options)
 
@@ -335,21 +343,18 @@ elif page == "Performance Summary":
         # Prepare plotting dataframe: drop rows with empty equipment names
         plot_df = performance_summary_df[[equipment_col] + selected_months].copy()
         plot_df = plot_df.dropna(subset=[equipment_col])
-        # drop rows where equipment name is empty string
         plot_df[equipment_col] = plot_df[equipment_col].astype(str).str.strip()
         plot_df = plot_df[plot_df[equipment_col] != ""]
-        # reset index for stable plotting
         plot_df = plot_df.reset_index(drop=True)
 
         if plot_df.empty:
             st.warning("No data available to plot after filtering empty equipment names.")
         else:
-            # Map equipment names to numeric positions on x-axis
             equipment_names = plot_df[equipment_col].astype(str).tolist()
             x_positions = np.arange(len(equipment_names))
 
             fig, ax = plt.subplots(figsize=(10, 4 + max(0, len(equipment_names)//10)))
-            marker_style = "o"  # circles, as requested (Option A)
+            marker_style = "o"
             for col in selected_months:
                 y = pd.to_numeric(plot_df[col], errors="coerce")
                 ax.scatter(x_positions, y, label=str(col), marker=marker_style, s=60, alpha=0.8)
@@ -451,7 +456,7 @@ elif page == "Fault Analysis":
     st.pyplot(fig)
 
     # === September 2025 daily faults — show full "6. Daily Performance data" sheet (ignore DATE column) ===
-    st.write("### 📆 September 2025 Daily Faults ")
+    st.write("### 📆 September 2025 Daily Faults")
     daily_display = daily_performance_df.copy()
     if "DATE" in daily_display.columns:
         daily_display = daily_display.drop(columns=["DATE"])
@@ -465,7 +470,7 @@ elif page == "Fault Analysis":
     else:
         st.dataframe(display_copy_with_format(daily_display, decimals=2, drop_empty_cols=True))
 
-    # === Downtime by Equipment (Top 20) — keep original aggregation logic intact ===
+    # === Downtime by Equipment (Top 20) — USES the "5. Individual Equipment" sheet aggregation (keeps original logic) ===
     st.write("### ⏱️ Downtime by Equipment (Top 20)")
     downtime_rank = (
         fault_df.groupby("EQUIP")["DOWNTIME_HRS"]
@@ -475,7 +480,7 @@ elif page == "Fault Analysis":
     )
     st.bar_chart(downtime_rank)
 
-    # === Calls by Equipment (Top 20) — keep original aggregation logic intact ===
+    # === Calls by Equipment (Top 20) — USES the "5. Individual Equipment" sheet aggregation (keeps original logic) ===
     st.write("### 📞 Calls by Equipment (Top 20)")
     calls_rank = (
         fault_df.groupby("EQUIP")["CALLS"]
