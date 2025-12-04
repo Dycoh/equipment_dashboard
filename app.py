@@ -371,7 +371,7 @@ elif page == "Performance Summary":
         st.info("Select one or more months/metrics to plot a scatter comparison.")
 
 # ==========================================
-# FAULT ANALYSIS PAGE
+# FAULT ANALYSIS PAGE (UPDATED: totals from last non-empty row per equipment)
 # ==========================================
 elif page == "Fault Analysis":
     st.subheader("🔧 Fault Analysis Based on Individual Equipment Sheet")
@@ -414,7 +414,7 @@ elif page == "Fault Analysis":
     if downtime_col:
         fault_df["DOWNTIME_HRS"] = pd.to_numeric(fault_df[downtime_col], errors="coerce")
     else:
-        fault_df["DOWNTIME_HRS"] = 0
+        fault_df["DOWNTIME_HRS"] = np.nan
 
     calls_col = None
     for c in fault_df.columns:
@@ -424,7 +424,7 @@ elif page == "Fault Analysis":
     if calls_col:
         fault_df["CALLS"] = pd.to_numeric(fault_df[calls_col], errors="coerce")
     else:
-        fault_df["CALLS"] = 0
+        fault_df["CALLS"] = np.nan
 
     mttr_col = None
     for c in fault_df.columns:
@@ -434,17 +434,47 @@ elif page == "Fault Analysis":
     if mttr_col:
         fault_df["MTTR"] = pd.to_numeric(fault_df[mttr_col], errors="coerce")
     else:
-        fault_df["MTTR"] = 0
+        fault_df["MTTR"] = np.nan
 
     # === Show the full Individual Equipment sheet (formatted for display only) ===
     st.write("### 📋 Full Individual Equipment")
     st.dataframe(display_copy_with_format(fault_df, decimals=2, drop_empty_cols=True))
 
-    # === KPIs ===
+    # === IDENTIFY TOTAL ROWS PER EQUIPMENT ===
+    # Logic:
+    # For each EQUIP group, find the last row where at least one of DOWNTIME_HRS or CALLS is non-null.
+    # That row is considered the 'reported total' row for that equipment (taken directly from the sheet).
+    totals_list = []
+    # preserve order of appearance in file by using groupby with sort=False
+    for equip_name, group in fault_df.groupby("EQUIP", sort=False):
+        # drop rows that are completely empty (safety)
+        g = group.dropna(how="all")
+        if g.empty:
+            continue
+        # find rows that have numeric info in DOWNTIME_HRS or CALLS
+        mask = g["DOWNTIME_HRS"].notna() | g["CALLS"].notna()
+        if mask.any():
+            last_total_row = g[mask].tail(1)
+            totals_list.append(last_total_row)
+        else:
+            # If no explicit numeric row found, attempt to use the last non-empty row of the group
+            last_row = g.tail(1)
+            totals_list.append(last_row)
+
+    if totals_list:
+        totals_df = pd.concat(totals_list, ignore_index=True)
+    else:
+        totals_df = pd.DataFrame(columns=fault_df.columns)
+
+    # === KPIs derived from totals_df (these are the sheet-reported totals) ===
+    total_fault_records = len(fault_df)
+    total_downtime_from_sheet = totals_df["DOWNTIME_HRS"].dropna().sum() if "DOWNTIME_HRS" in totals_df.columns else 0
+    total_calls_from_sheet = totals_df["CALLS"].dropna().sum() if "CALLS" in totals_df.columns else 0
+
     col1, col2, col3 = st.columns(3)
-    col1.metric("Total Fault Records", len(fault_df))
-    col2.metric("Total Downtime (hrs)", round(fault_df["DOWNTIME_HRS"].sum(), 2))
-    col3.metric("Total Calls", int(fault_df["CALLS"].sum() if pd.notna(fault_df["CALLS"].sum()) else 0))
+    col1.metric("Total Fault Records", total_fault_records)
+    col2.metric("Total Downtime (hrs)", round(total_downtime_from_sheet, 2))
+    col3.metric("Total Calls", int(total_calls_from_sheet) if not np.isnan(total_calls_from_sheet) else 0)
 
     # === Top Fault Categories ===
     st.write("### 🧠 Top Fault Categories")
@@ -470,27 +500,25 @@ elif page == "Fault Analysis":
     else:
         st.dataframe(display_copy_with_format(daily_display, decimals=2, drop_empty_cols=True))
 
-    # === Downtime by Equipment (Top 20) — USES the "5. Individual Equipment" sheet aggregation (keeps original logic) ===
+    # === Downtime by Equipment (Top 20) — use totals_df values (sheet-reported totals) ===
     st.write("### ⏱️ Downtime by Equipment (Top 20)")
-    downtime_rank = (
-        fault_df.groupby("EQUIP")["DOWNTIME_HRS"]
-        .sum()
-        .sort_values(ascending=False)
-        .head(20)
-    )
-    st.bar_chart(downtime_rank)
+    if not totals_df.empty and "DOWNTIME_HRS" in totals_df.columns:
+        # Build a series indexed by EQUIP with the 'DOWNTIME_HRS' value from totals_df
+        downtime_series = totals_df.set_index("EQUIP")["DOWNTIME_HRS"].sort_values(ascending=False).head(20)
+        st.bar_chart(downtime_series)
+    else:
+        st.info("No totals available to display downtime by equipment.")
 
-    # === Calls by Equipment (Top 20) — USES the "5. Individual Equipment" sheet aggregation (keeps original logic) ===
+    # === Calls by Equipment (Top 20) — use totals_df values (sheet-reported totals) ===
     st.write("### 📞 Calls by Equipment (Top 20)")
-    calls_rank = (
-        fault_df.groupby("EQUIP")["CALLS"]
-        .sum()
-        .sort_values(ascending=False)
-        .head(20)
-    )
-    st.bar_chart(calls_rank)
+    if not totals_df.empty and "CALLS" in totals_df.columns:
+        calls_series = totals_df.set_index("EQUIP")["CALLS"].sort_values(ascending=False).head(20)
+        st.bar_chart(calls_series)
+    else:
+        st.info("No totals available to display calls by equipment.")
 
 # ==========================================
 # FINAL: Success message
 # ==========================================
 st.success("✅ Dashboard loaded. (Display formatting applied only to visible tables.)")
+
